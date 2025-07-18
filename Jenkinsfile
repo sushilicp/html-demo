@@ -1,14 +1,16 @@
 pipeline {
     agent any
+    
+    environment {
+        DOCKER_HOST = "unix:///var/run/docker.sock"  # For Linux
+        // DOCKER_HOST = "npipe:////./pipe/docker_engine"  # For Windows
+    }
+
     stages {
         stage('Build') {
             steps {
                 script {
-                    docker.withRegistry('', '') {
-                        docker.build("my-web-app:${env.BUILD_ID}").inside {
-                            // Your build steps
-                        }
-                    }
+                    docker.build("my-web-app:${env.BUILD_ID}")
                 }
             }
         }
