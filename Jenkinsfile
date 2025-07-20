@@ -12,8 +12,8 @@ pipeline {
         stage('Checkout') {
             steps {
                 git branch: 'main', 
-                url: 'https://github.com/your-repo.git',
-                credentialsId: 'your-git-credentials'
+                url: 'https://github.com/sushilicp/html-demo.git',
+                credentialsId: ''
             }
         }
 
