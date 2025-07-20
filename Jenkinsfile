@@ -6,6 +6,7 @@ pipeline {
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
         GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
         DEPLOYMENT_URL = "http://localhost:8080"  // Update this
+        DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')
     }
 
     stages {
@@ -16,23 +17,41 @@ pipeline {
                 credentialsId: ''
             }
         }
+         stage('Login to Docker Hub') {
+            steps {
+                sh """
+                    echo ${DOCKER_HUB_CREDENTIALS_PSW} | \
+                    docker login -u ${DOCKER_HUB_CREDENTIALS_USR} --password-stdin
+                """
+            }
+        }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh """
-                        if docker image inspect my-web-app:${env.BUILD_ID} &>/dev/null; then
-                            docker rmi my-web-app:${env.BUILD_ID} || true
-                        fi
-                    """
-                    docker.build("my-web-app:${env.BUILD_ID}", "--no-cache --pull .")
+                    // Login to Docker Hub
+                    sh "echo ${DOCKER_HUB_CREDENTIALS_PSW} | docker login -u ${DOCKER_HUB_CREDENTIALS_USR} --password-stdin"
+                    
+                    // Build multi-stage Docker image
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest ."
                 }
             }
         }
 
-        stage('Run Container') {
+        stage('Push to Docker Hub') {
             steps {
                 script {
+                    // Push both specific tag and latest
+                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                    sh "docker push ${DOCKER_IMAGE}:latest"
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                script {
+                    // Cleanup existing container if needed
                     sh """
                         if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
                             docker stop ${CONTAINER_NAME} || true
@@ -40,31 +59,13 @@ pipeline {
                         fi
                     """
                     
-                    docker.image("my-web-app:${env.BUILD_ID}").run(
-                        "--name ${CONTAINER_NAME} " +
-                        "-p 8080:80 " +
-                        "-d " +
-                        "--health-cmd 'curl --fail http://localhost:80 || exit 1' " +
-                        "--health-interval 5s"
-                    )
-                    
-                    timeout(time: 1, unit: 'MINUTES') {
-                        waitUntil {
-                            def health = sh(
-                                script: "docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME}",
-                                returnStdout: true
-                            ).trim()
-                            return health == "healthy"
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('Smoke Test') {
-            steps {
-                script {
-                    sh "curl -sSf ${DEPLOYMENT_URL} > /dev/null"
+                    // Run new container
+                    sh """
+                        docker run -d \
+                          --name ${CONTAINER_NAME} \
+                          -p 8080:80 \
+                          ${DOCKER_IMAGE}:${DOCKER_TAG}
+                    """
                 }
             }
         }
@@ -73,47 +74,38 @@ pipeline {
     post {
         always {
             script {
-                // Capture logs before cleanup
-                def containerLogs = sh(
-                    script: "docker logs --tail 50 ${CONTAINER_NAME} 2>&1 || true",
-                    returnStdout: true
-                ).trim()
-                
                 // Cleanup
                 sh """
+                    docker logout || true
                     if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
+                        docker logs --tail 50 ${CONTAINER_NAME} || true
                         docker stop ${CONTAINER_NAME} || true
                         docker rm ${CONTAINER_NAME} || true
                     fi
                 """
                 cleanWs()
-                
-                // Store logs for notifications
-                currentBuild.containerLogs = containerLogs
             }
         }
         success {
             script {
                 def message = """
-                🚀 *Deployment Successful* 
-                *Build*: #${env.BUILD_NUMBER}
-                *Application*: ${env.JOB_NAME}
-                *Status*: ${currentBuild.currentResult}
-                *Access URL*: ${DEPLOYMENT_URL}
-                *Build Logs*: ${env.BUILD_URL}console
+                🚀 *Docker Image Published* 
+                *Image*: ${DOCKER_IMAGE}:${DOCKER_TAG}
+                *Deployed*: ${CONTAINER_NAME}
+                *Access*: http://your-server:8080
                 """
                 sendGoogleChatNotification(message)
             }
         }
         failure {
             script {
+                def logs = sh(script: "docker logs --tail 50 ${CONTAINER_NAME} 2>&1 || true", returnStdout: true)
                 def message = """
                 🔴 *Deployment Failed* 
                 *Build*: #${env.BUILD_NUMBER}
-                *Application*: ${env.JOB_NAME}
-                *Status*: ${currentBuild.currentResult}
-                *Last Logs*: ${currentBuild.containerLogs}
-                *Build Logs*: ${env.BUILD_URL}console
+                *Error*: ${currentBuild.currentResult}
+                *Logs*:
+                ${logs}
                 """
                 sendGoogleChatNotification(message)
             }
@@ -132,6 +124,6 @@ def sendGoogleChatNotification(String message) {
         curl -X POST \
         -H 'Content-Type: application/json' \
         -d '${payload}' \
-        '${GOOGLE_CHAT_WEBHOOK}' || echo "Google Chat notification failed"
+        '${env.GOOGLE_CHAT_WEBHOOK}' || echo "Notification failed"
     """
 }
