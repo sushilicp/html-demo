@@ -93,10 +93,7 @@ pipeline {
                     ❌ *Build #${env.BUILD_NUMBER} Failed*
                     *Application*: ${env.JOB_NAME}
                     *Error*: ${currentBuild.currentResult}
-                    *Last Logs*:
-                    \`\`\`
-                    ${logs}
-                    \`\`\`
+                    *Last Logs*: ${logs}
                     *Build Log*: ${env.BUILD_URL}console
                 """
                 sendGoogleChatNotification(failureMessage)
