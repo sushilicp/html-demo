@@ -106,7 +106,7 @@ pipeline {
                 """
             }
         }
-    }
+    
         success {
             script {
                 def message = """
@@ -135,7 +135,7 @@ pipeline {
             }
         }
     }
-
+}
 def sendGoogleChatNotification(String message) {
     def payload = """
     {
