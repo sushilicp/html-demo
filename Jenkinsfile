@@ -3,6 +3,7 @@ pipeline {
     
     environment {
         DOCKER_HOST = "unix:///var/run/docker.sock"
+        DOCKER_IMAGE = "sushil.parajuli@icp.edu.np/my-web-app"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
         GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
         DEPLOYMENT_URL = "http://localhost:8080"  // Update this
@@ -19,21 +20,29 @@ pipeline {
         }
          stage('Login to Docker Hub') {
             steps {
-                sh """
-                    echo ${DOCKER_HUB_CREDENTIALS_PSW} | \
-                    docker login -u ${DOCKER_HUB_CREDENTIALS_USR} --password-stdin
-                """
+                script {
+                    // Secure way to handle credentials
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        passwordVariable: 'DOCKER_PASSWORD',
+                        usernameVariable: 'DOCKER_USERNAME'
+                    )]) {
+                        sh """
+                            docker login -u ${env.DOCKER_USERNAME} -p ${env.DOCKER_PASSWORD}
+                        """
+                    }
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Login to Docker Hub
-                    sh "echo ${DOCKER_HUB_CREDENTIALS_PSW} | docker login -u ${DOCKER_HUB_CREDENTIALS_USR} --password-stdin"
-                    
-                    // Build multi-stage Docker image
-                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest ."
+                    // Build with proper tagging
+                    sh """
+                        docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
+                        docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
+                    """
                 }
             }
         }
@@ -41,9 +50,10 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    // Push both specific tag and latest
-                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                    sh "docker push ${DOCKER_IMAGE}:latest"
+                    sh """
+                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                        docker push ${env.DOCKER_IMAGE}:latest
+                    """
                 }
             }
         }
@@ -51,20 +61,17 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    // Cleanup existing container if needed
+                    // Cleanup existing container if it exists
                     sh """
-                        if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
-                            docker stop ${CONTAINER_NAME} || true
-                            docker rm ${CONTAINER_NAME} || true
+                        if docker container inspect ${env.CONTAINER_NAME} &>/dev/null; then
+                            docker stop ${env.CONTAINER_NAME} || true
+                            docker rm ${env.CONTAINER_NAME} || true
                         fi
-                    """
-                    
-                    // Run new container
-                    sh """
+                        
                         docker run -d \
-                          --name ${CONTAINER_NAME} \
+                          --name ${env.CONTAINER_NAME} \
                           -p 8080:80 \
-                          ${DOCKER_IMAGE}:${DOCKER_TAG}
+                          ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
                     """
                 }
             }
@@ -74,38 +81,36 @@ pipeline {
     post {
         always {
             script {
-                // Cleanup
+                // Basic cleanup without cleanWs
                 sh """
                     docker logout || true
-                    if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
-                        docker logs --tail 50 ${CONTAINER_NAME} || true
-                        docker stop ${CONTAINER_NAME} || true
-                        docker rm ${CONTAINER_NAME} || true
-                    fi
+                    rm -rf * || true
                 """
-                cleanWs()
             }
         }
         success {
             script {
                 def message = """
-                🚀 *Docker Image Published* 
-                *Image*: ${DOCKER_IMAGE}:${DOCKER_TAG}
-                *Deployed*: ${CONTAINER_NAME}
-                *Access*: http://your-server:8080
+                🚀 *Deployment Successful* 
+                *Build*: #${env.BUILD_NUMBER}
+                *Image*: ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                *Container*: ${env.CONTAINER_NAME}
                 """
                 sendGoogleChatNotification(message)
             }
         }
         failure {
             script {
-                def logs = sh(script: "docker logs --tail 50 ${CONTAINER_NAME} 2>&1 || true", returnStdout: true)
+                def logs = sh(
+                    script: "docker logs --tail 50 ${env.CONTAINER_NAME} 2>&1 || true",
+                    returnStdout: true
+                ).trim()
+                
                 def message = """
                 🔴 *Deployment Failed* 
                 *Build*: #${env.BUILD_NUMBER}
                 *Error*: ${currentBuild.currentResult}
-                *Logs*:
-                ${logs}
+                *Logs*: ${logs}
                 """
                 sendGoogleChatNotification(message)
             }
