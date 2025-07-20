@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         DOCKER_HOST = "unix:///var/run/docker.sock"
-        DOCKER_IMAGE = "sushil.parajuli@icp.edu.np/my-web-app"
+        DOCKER_IMAGE = "sushilicp/my-web-app"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
         GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
         DEPLOYMENT_URL = "http://localhost:8080"  // Update this
