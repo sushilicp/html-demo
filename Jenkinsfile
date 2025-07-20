@@ -135,7 +135,6 @@ pipeline {
             }
         }
     }
-}
 
 def sendGoogleChatNotification(String message) {
     def payload = """
