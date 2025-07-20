@@ -4,10 +4,12 @@ pipeline {
     environment {
         DOCKER_HOST = "unix:///var/run/docker.sock"
         DOCKER_IMAGE = "sushilicp/my-web-app"
+        DOCKER_TAG = "${env.BUILD_ID ?: 'latest'}"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
         GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
         DEPLOYMENT_URL = "http://localhost:8080"  // Update this
         DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')
+        HOST_POST = "8080"
     }
 
     stages {
@@ -38,11 +40,16 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build with proper tagging
-                    sh """
-                        docker build -t ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} .
-                        docker tag ${env.DOCKER_IMAGE}:${env.DOCKER_TAG} ${env.DOCKER_IMAGE}:latest
-                    """
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        passwordVariable: 'DOCKER_PASSWORD',
+                        usernameVariable: 'DOCKER_USERNAME'
+                    )]) {
+                        sh """
+                            docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
+                            docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                        """
+                    }
                 }
             }
         }
@@ -61,17 +68,29 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    // Cleanup existing container if it exists
+                    // Find and stop any container using our port
                     sh """
-                        if docker container inspect ${env.CONTAINER_NAME} &>/dev/null; then
-                            docker stop ${env.CONTAINER_NAME} || true
-                            docker rm ${env.CONTAINER_NAME} || true
+                        # Find container using port ${HOST_PORT}
+                        CONTAINER_USING_PORT=\$(docker ps --format '{{.Names}}' --filter "publish=${HOST_PORT}" | head -n 1)
+                        
+                        # Stop and remove if found
+                        if [ -n "\$CONTAINER_USING_PORT" ]; then
+                            echo "Found container \$CONTAINER_USING_PORT using port ${HOST_PORT}, stopping it..."
+                            docker stop \$CONTAINER_USING_PORT || true
+                            docker rm \$CONTAINER_USING_PORT || true
                         fi
                         
+                        # Remove our named container if it exists
+                        if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
+                            docker stop ${CONTAINER_NAME} || true
+                            docker rm ${CONTAINER_NAME} || true
+                        fi
+                        
+                        # Run new container
                         docker run -d \
-                          --name ${env.CONTAINER_NAME} \
-                          -p 8080:80 \
-                          ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
+                            --name ${CONTAINER_NAME} \
+                            -p ${HOST_PORT}:80 \
+                            ${DOCKER_IMAGE}:${DOCKER_TAG}
                     """
                 }
             }
@@ -81,13 +100,13 @@ pipeline {
     post {
         always {
             script {
-                // Basic cleanup without cleanWs
                 sh """
                     docker logout || true
-                    rm -rf * || true
+                    docker ps -a --filter "name=${CONTAINER_NAME}" --format "{{.ID}}" | xargs -r docker rm -f || true
                 """
             }
         }
+    }
         success {
             script {
                 def message = """
