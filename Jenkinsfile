@@ -5,23 +5,26 @@ pipeline {
         DOCKER_HOST = "unix:///var/run/docker.sock"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
         GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
+        DEPLOYMENT_URL = "http://localhost:8080"  // Update this
     }
 
     stages {
         stage('Checkout') {
             steps {
                 git branch: 'main', 
-                url: 'https://github.com/sushilicp/html-demo.git',
-                credentialsId: ''
+                url: 'https://github.com/your-repo.git',
+                credentialsId: 'your-git-credentials'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        sh "docker rmi my-web-app:${env.BUILD_ID} || true"
-                    }
+                    sh """
+                        if docker image inspect my-web-app:${env.BUILD_ID} &>/dev/null; then
+                            docker rmi my-web-app:${env.BUILD_ID} || true
+                        fi
+                    """
                     docker.build("my-web-app:${env.BUILD_ID}", "--no-cache --pull .")
                 }
             }
@@ -30,10 +33,12 @@ pipeline {
         stage('Run Container') {
             steps {
                 script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        sh "docker stop ${CONTAINER_NAME} || true"
-                        sh "docker rm ${CONTAINER_NAME} || true"
-                    }
+                    sh """
+                        if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
+                            docker stop ${CONTAINER_NAME} || true
+                            docker rm ${CONTAINER_NAME} || true
+                        fi
+                    """
                     
                     docker.image("my-web-app:${env.BUILD_ID}").run(
                         "--name ${CONTAINER_NAME} " +
@@ -43,13 +48,14 @@ pipeline {
                         "--health-interval 5s"
                     )
                     
-                    sleep(time: 10, unit: 'SECONDS')
-                    def health = sh(
-                        script: "docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME}",
-                        returnStdout: true
-                    ).trim()
-                    if (health != "healthy") {
-                        error "Container failed health check: ${health}"
+                    timeout(time: 1, unit: 'MINUTES') {
+                        waitUntil {
+                            def health = sh(
+                                script: "docker inspect --format='{{.State.Health.Status}}' ${CONTAINER_NAME}",
+                                returnStdout: true
+                            ).trim()
+                            return health == "healthy"
+                        }
                     }
                 }
             }
@@ -58,10 +64,7 @@ pipeline {
         stage('Smoke Test') {
             steps {
                 script {
-                    sh """
-                        curl -sSf http://localhost:8080 > /dev/null || \
-                        (echo 'Web server not responding' && exit 1)
-                    """
+                    sh "curl -sSf ${DEPLOYMENT_URL} > /dev/null"
                 }
             }
         }
@@ -70,33 +73,49 @@ pipeline {
     post {
         always {
             script {
+                // Capture logs before cleanup
+                def containerLogs = sh(
+                    script: "docker logs --tail 50 ${CONTAINER_NAME} 2>&1 || true",
+                    returnStdout: true
+                ).trim()
+                
+                // Cleanup
+                sh """
+                    if docker container inspect ${CONTAINER_NAME} &>/dev/null; then
+                        docker stop ${CONTAINER_NAME} || true
+                        docker rm ${CONTAINER_NAME} || true
+                    fi
+                """
                 cleanWs()
-                sh "docker ps -a --filter 'name=${CONTAINER_NAME}'"
+                
+                // Store logs for notifications
+                currentBuild.containerLogs = containerLogs
             }
         }
         success {
             script {
-                def successMessage = """
-                    ✅ *Build #${env.BUILD_NUMBER} Success*
-                    *Application*: ${env.JOB_NAME}
-                    *Status*: Deployed successfully
-                    *Access URL*: http://your-server:8080
-                    *Build Log*: ${env.BUILD_URL}console
+                def message = """
+                🚀 *Deployment Successful* 
+                *Build*: #${env.BUILD_NUMBER}
+                *Application*: ${env.JOB_NAME}
+                *Status*: ${currentBuild.currentResult}
+                *Access URL*: ${DEPLOYMENT_URL}
+                *Build Logs*: ${env.BUILD_URL}console
                 """
-                sendGoogleChatNotification(successMessage)
+                sendGoogleChatNotification(message)
             }
         }
         failure {
             script {
-                def logs = sh(script: "docker logs ${CONTAINER_NAME} --tail 50 || true", returnStdout: true).trim()
-                def failureMessage = """
-                    ❌ *Build #${env.BUILD_NUMBER} Failed*
-                    *Application*: ${env.JOB_NAME}
-                    *Error*: ${currentBuild.currentResult}
-                    *Last Logs*: ${logs}
-                    *Build Log*: ${env.BUILD_URL}console
+                def message = """
+                🔴 *Deployment Failed* 
+                *Build*: #${env.BUILD_NUMBER}
+                *Application*: ${env.JOB_NAME}
+                *Status*: ${currentBuild.currentResult}
+                *Last Logs*: ${currentBuild.containerLogs}
+                *Build Logs*: ${env.BUILD_URL}console
                 """
-                sendGoogleChatNotification(failureMessage)
+                sendGoogleChatNotification(message)
             }
         }
     }
@@ -105,7 +124,7 @@ pipeline {
 def sendGoogleChatNotification(String message) {
     def payload = """
     {
-        "text": "${message.replaceAll('"', '\\\\"').replaceAll('\n', '\\\\n')}"
+        "text": "${message.replace('"', '\\"').replace('\n', '\\n')}"
     }
     """
     
@@ -113,6 +132,6 @@ def sendGoogleChatNotification(String message) {
         curl -X POST \
         -H 'Content-Type: application/json' \
         -d '${payload}' \
-        '${env.GOOGLE_CHAT_WEBHOOK}'
+        '${GOOGLE_CHAT_WEBHOOK}' || echo "Google Chat notification failed"
     """
 }
