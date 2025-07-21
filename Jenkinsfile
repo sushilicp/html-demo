@@ -97,7 +97,7 @@ pipeline {
 
     post {
         always {
-            node('windows') { // Replace 'windows' with your agent's label
+            node('built-in') { // Replace 'windows' with your agent's label
                 script {
                     sh """
                         docker logout || true
@@ -108,7 +108,7 @@ pipeline {
         }
     
         success {
-            node('windows') { // Replace 'windows' with your agent's label
+            node('built-in') { // Replace 'windows' with your agent's label
                 script {
                     def message = """
                     🚀 *Deployment Successful* 
@@ -121,7 +121,7 @@ pipeline {
             }
         }
         failure {
-            node('windows') { // Replace 'windows' with your agent's label
+            node('built-in') { // Replace 'windows' with your agent's label
                 script {
                     def logs = sh(
                         script: "docker logs --tail 50 ${env.CONTAINER_NAME} 2>&1 || true",
@@ -142,7 +142,7 @@ pipeline {
 }
 
 def sendGoogleChatNotification(String message) {
-    node('windows') { // Replace 'windows' with your agent's label
+    node('built-in') { // Replace 'windows' with your agent's label
         def payload = """
         {
             "text": "${message.replace('"', '\\"').replace('\n', '\\n')}"
