@@ -2,11 +2,11 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_HOST = "npipe:////./pipe/docker_engine" // Updated for Windows
+        DOCKER_HOST = "npipe:////./pipe/docker_engine" // Windows Docker endpoint
         DOCKER_IMAGE = "sushilicp/my-web-app"
         DOCKER_TAG = "${env.BUILD_ID ?: 'latest'}"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
-        GOOGLE_CHAT_WEBHOOK = "https://chat.googleapis.com/v1/spaces/AAQAaQR_SNA/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=RR8wTSfb0py5U2VnLa53xYIJp2yYxVSWV4wP4ovXPxk"
+        GOOGLE_CHAT_WEBHOOK = credentials('google-chat-webhook') // Secure webhook
         DEPLOYMENT_URL = "http://localhost:8088"
         DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')
         HOST_PORT = "8088"
@@ -28,8 +28,8 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD',
                         usernameVariable: 'DOCKER_USERNAME'
                     )]) {
-                        sh """
-                            docker login -u ${env.DOCKER_USERNAME} -p ${env.DOCKER_PASSWORD}
+                        bat """
+                            docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%
                         """
                     }
                 }
@@ -44,9 +44,9 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD',
                         usernameVariable: 'DOCKER_USERNAME'
                     )]) {
-                        sh """
-                            docker login -u ${DOCKER_USERNAME} -p ${DOCKER_PASSWORD}
-                            docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
+                        bat """
+                            docker login -u %DOCKER_USERNAME% -p %DOCKER_PASSWORD%
+                            docker build -t %DOCKER_IMAGE%:%DOCKER_TAG% .
                         """
                     }
                 }
@@ -56,9 +56,9 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    sh """
-                        docker push ${env.DOCKER_IMAGE}:${env.DOCKER_TAG}
-                        docker push ${env.DOCKER_IMAGE}:latest
+                    bat """
+                        docker push %DOCKER_IMAGE%:%DOCKER_TAG%
+                        docker push %DOCKER_IMAGE%:latest
                     """
                 }
             }
@@ -67,23 +67,8 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    sh """
-                        # Find container using port ${HOST_PORT}
-                        CONTAINER_USING_PORT=\$(docker ps --format '{{.Names}}' --filter "publish=${HOST_PORT}" | head -n 1)
-                        
-                        # Stop and remove if found
-                        if [ -n "\$CONTAINER_USING_PORT" ]; then
-                            echo "Found container \$CONTAINER_USING_PORT using port ${HOST_PORT}, stopping it..."
-                            docker stop \$CONTAINER_USING_PORT || true
-                            docker rm \$CONTAINER_USING_PORT || true
-                        fi
-                        
-                        # Remove our named container if it exists
-                        if docker container inspect ${CONTAINER_NAME} >/dev/null 2>&1; then
-                            docker stop ${CONTAINER_NAME} || true
-                            docker rm ${CONTAINER_NAME} || true
-                        fi
-                        
+                    // Use sh for complex shell script, requires Git Bash or WSL
+                    bat """
                         # Run new container
                         docker run -d \
                             --name ${CONTAINER_NAME} \
@@ -97,18 +82,19 @@ pipeline {
 
     post {
         always {
-            node('built-in') { // Replace 'windows' with your agent's label
+            node('built-in') {
                 script {
-                    sh """
-                        docker logout || true
-                        docker ps -a --filter "name=${env.CONTAINER_NAME}" --format "{{.ID}}" | xargs -r docker rm -f || true
+                    // Use bat for simple Docker commands
+                    bat """
+                        docker logout || exit 0
+                        docker ps -a --filter "name=%CONTAINER_NAME%" --format "{{.ID}}" | for /f %%i in ('more') do docker rm -f %%i || exit 0
                     """
                 }
             }
         }
     
         success {
-            node('built-in') { // Replace 'windows' with your agent's label
+            node('built-in') {
                 script {
                     def message = """
                     🚀 *Deployment Successful* 
@@ -121,10 +107,10 @@ pipeline {
             }
         }
         failure {
-            node('built-in') { // Replace 'windows' with your agent's label
+            node('built-in') {
                 script {
-                    def logs = sh(
-                        script: "docker logs --tail 50 ${env.CONTAINER_NAME} 2>&1 || true",
+                    def logs = bat(
+                        script: "docker logs --tail 50 %CONTAINER_NAME% 2>&1 || exit 0",
                         returnStdout: true
                     ).trim()
                     
@@ -142,18 +128,19 @@ pipeline {
 }
 
 def sendGoogleChatNotification(String message) {
-    node('built-in') { // Replace 'windows' with your agent's label
+    node('built-in') {
         def payload = """
         {
             "text": "${message.replace('"', '\\"').replace('\n', '\\n')}"
         }
         """
         
-        sh """
-            curl -X POST \
-            -H 'Content-Type: application/json' \
-            -d '${payload}' \
-            '${env.GOOGLE_CHAT_WEBHOOK}' || echo "Notification failed"
+        // Use bat for curl, assuming curl is installed
+        bat """
+            curl -X POST ^
+            -H "Content-Type: application/json" ^
+            -d "${payload}" ^
+            "%GOOGLE_CHAT_WEBHOOK%" || echo "Notification failed"
         """
     }
 }
