@@ -101,7 +101,9 @@ pipeline {
                 script {
                     bat """
                         docker logout || exit 0
-                        docker ps -a --filter "name=%CONTAINER_NAME%" --format "{{.ID}}" | for /f %%i in ('more') do docker rm -f %%i || exit 0
+                        docker ps -a --filter "name=%CONTAINER_NAME%" --format "{{.ID}}" > temp.txt
+                        for /f %%i in (temp.txt) do docker rm -f %%i || exit 0
+                        del temp.txt || exit 0
                     """
                 }
             }
@@ -125,10 +127,11 @@ pipeline {
                 script {
                     def logs = bat(
                         script: """
-                            if exist "%CONTAINER_NAME%" (
+                            docker container inspect %CONTAINER_NAME% > nul 2>&1
+                            if %ERRORLEVEL% == 0 (
                                 docker logs --tail 50 %CONTAINER_NAME% 2>&1 || exit 0
                             ) else (
-                                echo "Container %CONTAINER_NAME% does not exist"
+                                echo Container %CONTAINER_NAME% does not exist
                             )
                         """,
                         returnStdout: true
@@ -149,8 +152,8 @@ pipeline {
 
 def sendGoogleChatNotification(String message) {
     node('built-in') {
-        // Escape the message for JSON and Windows batch
-        def escapedMessage = message.replace('"', '""').replace('\n', '^n')
+        // Escape message for JSON and batch
+        def escapedMessage = message.replace('"', '""').replace('\n', '^n').replace('%', '%%').replace('&', '^&')
         def payload = """{"text":"${escapedMessage}"}"""
         
         bat """
