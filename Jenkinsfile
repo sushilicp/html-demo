@@ -67,8 +67,23 @@ pipeline {
         stage('Deploy') {
             steps {
                 script {
-                    // Use sh for complex shell script, requires Git Bash or WSL
-                    bat """
+                    sh """
+                        # Find container using port ${HOST_PORT}
+                        CONTAINER_USING_PORT=\$(docker ps --format '{{.Names}}' --filter "publish=${HOST_PORT}" | head -n 1)
+                        
+                        # Stop and remove if found
+                        if [ -n "\$CONTAINER_USING_PORT" ]; then
+                            echo "Found container \$CONTAINER_USING_PORT using port ${HOST_PORT}, stopping it..."
+                            docker stop \$CONTAINER_USING_PORT || true
+                            docker rm \$CONTAINER_USING_PORT || true
+                        fi
+                        
+                        # Remove our named container if it exists
+                        if docker container inspect ${CONTAINER_NAME} >/dev/null 2>&1; then
+                            docker stop ${CONTAINER_NAME} || true
+                            docker rm ${CONTAINER_NAME} || true
+                        fi
+                        
                         # Run new container
                         docker run -d \
                             --name ${CONTAINER_NAME} \
@@ -84,7 +99,6 @@ pipeline {
         always {
             node('built-in') {
                 script {
-                    // Use bat for simple Docker commands
                     bat """
                         docker logout || exit 0
                         docker ps -a --filter "name=%CONTAINER_NAME%" --format "{{.ID}}" | for /f %%i in ('more') do docker rm -f %%i || exit 0
@@ -110,7 +124,13 @@ pipeline {
             node('built-in') {
                 script {
                     def logs = bat(
-                        script: "docker logs --tail 50 %CONTAINER_NAME% 2>&1 || exit 0",
+                        script: """
+                            if exist "%CONTAINER_NAME%" (
+                                docker logs --tail 50 %CONTAINER_NAME% 2>&1 || exit 0
+                            ) else (
+                                echo "Container %CONTAINER_NAME% does not exist"
+                            )
+                        """,
                         returnStdout: true
                     ).trim()
                     
@@ -129,18 +149,15 @@ pipeline {
 
 def sendGoogleChatNotification(String message) {
     node('built-in') {
-        def payload = """
-        {
-            "text": "${message.replace('"', '\\"').replace('\n', '\\n')}"
-        }
-        """
+        // Escape the message for JSON and Windows batch
+        def escapedMessage = message.replace('"', '""').replace('\n', '^n')
+        def payload = """{"text":"${escapedMessage}"}"""
         
-        // Use bat for curl, assuming curl is installed
         bat """
             curl -X POST ^
             -H "Content-Type: application/json" ^
             -d "${payload}" ^
-            "%GOOGLE_CHAT_WEBHOOK%" || echo "Notification failed"
+            "%GOOGLE_CHAT_WEBHOOK%" || echo Notification failed
         """
     }
 }
