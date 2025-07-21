@@ -2,7 +2,7 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_HOST = "unix:///var/run/docker.sock"
+        DOCKER_HOST = "npipe:////./pipe/docker_engine" // Updated for Windows
         DOCKER_IMAGE = "sushilicp/my-web-app"
         DOCKER_TAG = "${env.BUILD_ID ?: 'latest'}"
         CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
@@ -97,7 +97,7 @@ pipeline {
 
     post {
         always {
-            node {
+            node('windows') { // Replace 'windows' with your agent's label
                 script {
                     sh """
                         docker logout || true
@@ -108,7 +108,7 @@ pipeline {
         }
     
         success {
-            node {
+            node('windows') { // Replace 'windows' with your agent's label
                 script {
                     def message = """
                     🚀 *Deployment Successful* 
@@ -121,7 +121,7 @@ pipeline {
             }
         }
         failure {
-            node {
+            node('windows') { // Replace 'windows' with your agent's label
                 script {
                     def logs = sh(
                         script: "docker logs --tail 50 ${env.CONTAINER_NAME} 2>&1 || true",
@@ -142,7 +142,7 @@ pipeline {
 }
 
 def sendGoogleChatNotification(String message) {
-    node {
+    node('windows') { // Replace 'windows' with your agent's label
         def payload = """
         {
             "text": "${message.replace('"', '\\"').replace('\n', '\\n')}"
