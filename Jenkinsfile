@@ -2,14 +2,14 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_HOST = "npipe:////./pipe/docker_engine" // Windows Docker endpoint
-        DOCKER_IMAGE = "sushilicp/my-web-app"
-        DOCKER_TAG = "${env.BUILD_ID ?: 'latest'}"
-        CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
-        GOOGLE_CHAT_WEBHOOK = credentials('google-chat-webhook') // Secure webhook
-        DEPLOYMENT_URL = "http://localhost:8088"
-        DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')
-        HOST_PORT = "8088"
+        def DOCKER_HOST = "npipe:////./pipe/docker_engine" // Windows Docker endpoint
+        def DOCKER_IMAGE = "sushilicp/my-web-app"
+        def DOCKER_TAG = "${env.BUILD_ID ?: 'latest'}"
+        def CONTAINER_NAME = "my-web-app-${env.BUILD_NUMBER}"
+        def GOOGLE_CHAT_WEBHOOK = credentials('google-chat-webhook') // Secure webhook
+        def DEPLOYMENT_URL = "http://localhost:8088"
+        def DOCKER_HUB_CREDENTIALS = credentials('docker-hub-credentials')
+        def HOST_PORT = "8088"
     }
 
     stages {
